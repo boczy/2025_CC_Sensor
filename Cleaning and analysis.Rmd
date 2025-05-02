@@ -1,0 +1,377 @@
+---
+title: "Data Cleaning and analysis"
+author: "Chris Bocz"
+date: "2025-04-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+```
+
+## Load Data
+
+```{r}
+# List Raw Data files in the working directory (raw files from data-loggers are in .dat format).  Create a list of all files, then 2 seperate lists for files from Watkinsville vs Midville.
+
+file_paths <- list.files(
+  path = "Data/",
+  pattern = "\\.dat$",
+  full.names = TRUE
+)
+mdv_files <- file_paths[grepl("Midville", file_paths, ignore.case = TRUE)]
+wat_files <- file_paths[grepl("Watkinsville", file_paths, ignore.case = TRUE)]
+
+#Create data-frames, 1 for Midville, 1 for Watkinsville.  Add filename as a column, for extracting metdata later.  Skip first row of observations; standard for data files from our Campbell Scientific loggers 
+
+mdv_df <- map_dfr(mdv_files, function(file) {
+  df <- read_csv(file, skip = 1)  # Read file, skipping the first row
+  df %>% mutate(source_file = basename(file))  # Add filename as a column
+})
+
+wat_df <- map_dfr(wat_files, function(file) {
+  df <- read_csv(file, skip = 1)  # Read file, skipping the first row
+  df %>% mutate(source_file = basename(file))  # Add filename as a column
+})
+
+```
+
+
+## Clean Data
+```{r Clean mdv data}
+
+# Extract the units row
+mdv_units_row <- mdv_df[1, ]
+
+# Remove the units row and next row from the data
+mdv_cleaned_data1 <- mdv_df[-c(1,2),]
+
+# Combine column names and units
+new_colnames <- paste0(names(mdv_cleaned_data1), " (", unlist(mdv_units_row), ")")
+names(mdv_cleaned_data1) <- new_colnames
+mdv_cleaned_data1 <- mdv_cleaned_data1 %>%
+  rename(`source file` = `source_file (Cotton Commission Midville Early_Daily.dat)`)
+
+# Remove un-needed columns
+mdv_cleaned_data2 <- mdv_cleaned_data1 %>%
+   select(-`RECORD (RN)`, -`BattV_Min (Volts)`, -`PTemp_C_Avg (Deg C)`, -`BattV_Avg (NA)`)
+
+# Remove duplicate/missing data, convert column names to lower-case, replace spaces with underscores.  This is general practice to standardize column names and make them universally readable to Tinyverse
+mdv_cleaned_data3 <- mdv_cleaned_data2 %>%
+  na.omit() %>%  # Remove rows with missing values
+  distinct() %>%  # Remove duplicate rows
+  rename_all(tolower) %>%  # Convert column names to lowercase
+  rename_all(~gsub(" ", "_", .))  # Replace spaces with underscores
+
+# Convert the original timestamp column to date-time format and rename it, remove timestamp_(ts) column
+mdv_cleaned_data4 <- mdv_cleaned_data3 %>%
+  mutate(timestamp = ymd_hms(`timestamp_(ts)`)) %>%
+  select(-`timestamp_(ts)`, everything())
+
+#Remove NA's introduced in the last step:
+mdv_cleaned_data5 <- na.omit(mdv_cleaned_data4)
+
+## Filter the dataset to remove observations before sensors were installed and after sensors were pulled (October 11, 2024 in Midville, November 11, 2024 in Watkinsville)  
+mdv_cleaned_data6 <- mdv_cleaned_data5 %>%
+  filter(timestamp <= as.POSIXct("2024-10-11 23:59:59"))
+
+# Pivot to long data, make sensor depth, cover-crop treatment and "stat" into variables. Stat: loggers took min, max, and avg data for each observation, the "stat" column tells us which of those is being reported.  Also pull metadata from filenames (sourcefile column), create cc_plant_time (early vs late planted cover crop), and dara_freq (whether observation is hourly or daily)
+
+mdv_cleaned_data7 <- mdv_cleaned_data6 %>%
+  pivot_longer(
+    cols = -c(timestamp, source_file),
+    names_to = c("measure", "treatment", "depth", "stat", "units"),
+    names_sep = "_"
+  ) %>%
+  mutate(
+    # Extract metadata from source_file
+    cc_plant_time = str_extract(source_file, "Early|Late") %>% tolower(),
+    data_freq = str_extract(source_file, "Daily|Hourly") %>% tolower(),
+  
+    # Handle measure units
+    measure_units = case_when(
+     measure == "t" & units == "(deg" ~ "t_(deg_c)",
+      TRUE ~ paste0(measure, "_", units)
+    ),
+    value = as.numeric(value)
+  )%>%
+  select(-measure, -units) %>%
+  filter(!is.na(measure_units)) #%>%
+  # Rename and format columns
+  #rename_with(~ tolower(gsub(" ", "_", .x)))  # Applies to all columns
+
+  #select(-measure, -units) %>%
+  #filter(!is.na(measure_units))  # Remove rows where measure_units is NA
+
+#Remove source_file column
+mdv_cleaned_data8 <- mdv_cleaned_data7 %>% 
+  select(-source_file)
+
+#Pivot the data so that measure_units becomes columns, means a seperate column for each collected-data variable
+mdv_cleaned_data9 <- mdv_cleaned_data8 %>%
+  pivot_wider(names_from = measure_units, values_from = value) %>%
+    mutate(
+      treatment = as.factor(treatment),
+      depth = as.factor(depth),
+      stat = as.factor(stat),
+      cc_plant_time = as.factor(cc_plant_time),
+      data_freq = as.factor(data_freq)
+      ) %>% 
+  select(-timestamp_NA)#remove uneeded column created by pivot_wider
+
+# Remove observations where `vwc_(m^3/m^3)` <= 0.0000 or `ec_(ds/m)` < 0.  This should remove observations where loggers were on but not installed.  Remove NAs.
+mdv_cleaned_data10 <- mdv_cleaned_data9 %>%
+  filter(!(`vwc_(m^3/m^3)` <= 0 | `ec_(ds/m)` < 0)) %>% 
+  na.omit()
+
+# Create separate tables for all 'stat' * 'data_freq' combinations
+
+mdv_daily_avg <- mdv_cleaned_data10 %>%
+  filter(stat == "avg", data_freq == "daily")
+
+mdv_daily_min <- mdv_cleaned_data10 %>%
+  filter(stat == "min", data_freq == "daily")
+
+mdv_daily_max <- mdv_cleaned_data10 %>%
+  filter(stat == "max", data_freq == "daily")
+
+mdv_hourly_avg <- mdv_cleaned_data10 %>%
+  filter(stat == "avg", data_freq == "hourly")
+
+mdv_hourly_min <- mdv_cleaned_data10 %>%
+  filter(stat == "min", data_freq == "hourly")
+
+mdv_hourly_max <- mdv_cleaned_data10 %>%
+  filter(stat == "max", data_freq == "hourly")
+
+```
+
+
+```{r Clean wat data}
+
+# Extract the units row
+wat_units_row <- wat_df[1, ]
+
+# Remove the units row and next row from the data
+wat_cleaned_data1 <- wat_df[-c(1,2),]
+
+# Combine column names and units
+new_colnames <- paste0(names(wat_cleaned_data1), " (", unlist(wat_units_row), ")")
+names(wat_cleaned_data1) <- new_colnames
+wat_cleaned_data1 <- wat_cleaned_data1 %>%
+  rename(`source file` = `source_file (Cotton Commission Watkinsville Early_Daily.dat)`)
+
+# Remove un-needed columns
+wat_cleaned_data2 <- wat_cleaned_data1 %>%
+   select(-`RECORD (RN)`, -`BattV_Min (Volts)`, -`PTemp_C_Avg (Deg C)`, -`BattV_Avg (NA)`)
+
+# Remove duplicate/missing data, convert column names to lower-case, replace spaces with underscores.  This is good-practice to standardize column names and make them universally readable to Tinyverse
+wat_cleaned_data3 <- wat_cleaned_data2 %>%
+  na.omit() %>%  # Remove rows with missing values
+  distinct() %>%  # Remove duplicate rows
+  rename_all(tolower) %>%  # Convert column names to lowercase
+  rename_all(~gsub(" ", "_", .))  # Replace spaces with underscores
+
+# Convert the original timestamp column to date-time format and rename it, remove timestamp_(ts) column
+wat_cleaned_data4 <- wat_cleaned_data3 %>%
+  mutate(timestamp = ymd_hms(`timestamp_(ts)`)) %>%
+  select(-`timestamp_(ts)`, everything())
+
+#Remove NA's introduced in the last step:
+wat_cleaned_data5 <- na.omit(wat_cleaned_data4)
+
+## Filter the dataset to remove observations before sensors were installed and after sensors were pulled (October 11, 2024 in Midville, November 11, 2024 in Watkinsville)  
+wat_cleaned_data6 <- wat_cleaned_data5 %>%
+  filter(timestamp <= as.POSIXct("2024-11-11 23:59:59"))
+
+# Pivot to long data, make sensor depth, cover-crop treatment and "stat" into variables. Stat: loggers took min, max, and avg data for each observation, the "stat" column tells us which of those is being reported.  Also pull metadata from filenames (sourcefile column), create cc_plant_time (early vs late planted cover crop), and dara_freq (whether observation is hourly or daily)
+
+wat_cleaned_data7 <- wat_cleaned_data6 %>%
+  pivot_longer(
+    cols = -c(timestamp, source_file),
+    names_to = c("measure", "treatment", "depth", "stat", "units"),
+    names_sep = "_"
+  ) %>%
+  mutate(
+    # Extract metadata from source_file
+    cc_plant_time = str_extract(source_file, "Early|Late") %>% tolower(),
+    data_freq = str_extract(source_file, "Daily|Hourly") %>% tolower(),
+  
+    # Handle measure units
+    measure_units = case_when(
+     measure == "t" & units == "(deg" ~ "t_(deg_c)",
+      TRUE ~ paste0(measure, "_", units)
+    ),
+    value = as.numeric(value)
+  )%>%
+  select(-measure, -units) %>%
+  filter(!is.na(measure_units))
+  # Rename and format columns
+  #rename_with(~ tolower(gsub(" ", "_", .x)))  # Applies to all columns
+
+  #select(-measure, -units) %>%
+  #filter(!is.na(measure_units))  # Remove rows where measure_units is NA
+
+#Change treatment, depth, stat, cc_plant_time, and data_freq columns to factors, remove source_file column
+wat_cleaned_data8 <- wat_cleaned_data7 %>%
+  mutate(
+      treatment = as.factor(treatment),
+      depth = as.factor(depth),
+      stat = as.factor(stat),
+      cc_plant_time = as.factor(cc_plant_time),
+      data_freq = as.factor(data_freq)
+      ) %>% 
+  select(-source_file)
+
+#Pivot the data so that measure_units becomes columns, means a seperate column for each collected-data variable
+wat_cleaned_data9 <- wat_cleaned_data8 %>%
+  pivot_wider(names_from = measure_units, values_from = value) %>% 
+  select(-timestamp_NA)#remove uneeded column created by pivot_wider
+
+# Remove observations where `vwc_(m^3/m^3)` <= 0.0000 or `ec_(ds/m)` < 0.  This should remove observations where loggers were on but not installed.  Remove NAs.
+wat_cleaned_data10 <- wat_cleaned_data9 %>%
+  filter(!(`vwc_(m^3/m^3)` <= 0 | `ec_(ds/m)` < 0)) %>% 
+  na.omit()
+
+# Create separate tables for all 'stat' * 'data_freq' combinations
+
+wat_daily_avg <- wat_cleaned_data10 %>%
+  filter(stat == "avg", data_freq == "daily")
+
+wat_daily_min <- wat_cleaned_data10 %>%
+  filter(stat == "min", data_freq == "daily")
+
+wat_daily_max <- wat_cleaned_data10 %>%
+  filter(stat == "max", data_freq == "daily")
+
+wat_hourly_avg <- wat_cleaned_data10 %>%
+  filter(stat == "avg", data_freq == "hourly")
+
+wat_hourly_min <- wat_cleaned_data10 %>%
+  filter(stat == "min", data_freq == "hourly")
+
+wat_hourly_max <- wat_cleaned_data10 %>%
+  filter(stat == "max", data_freq == "hourly")
+
+
+```
+
+## Exploratory Data Analysis
+We will use vwc_(m^3/m^3), ec_(ds/m), t_(deg_c), as response variables.  We will investigate if treatment or cc_plant_time had an effect, or if there was an interaction with: treatment and depth, treatment and cc_plant_time, cc_plant_time and depth.  We will investigate the above for all 6 permutations of 'stat' * 'data_freq'.  That would resut in 90 boxplots per location, that seems like too many
+```{r histograms, echo=FALSE}
+##Using `vwc_(m^3/m^3)`, `ec_(ds/m)`, `t_(deg_c)` as response variable, create histograms for all permutations of 'stat' * 'data_freq' at both locations
+
+# List your data frames and give them friendly names for plotting
+data_list <- list(
+  wat = wat_cleaned_data10,
+  mdv = mdv_cleaned_data10
+)
+
+# List combinations of 'stat' * 'data_freq'
+combinations <- wat_cleaned_data10 %>%
+  distinct(stat, data_freq)
+
+# Define response variables in a coding-friendly way
+response_vars <- c("vwc_(m^3/m^3)", "ec_(ds/m)", "t_(deg_c)")
+
+# Create plots, looping through all possible combinations
+library(rlang)  # for .data pronoun
+
+for (loc in names(data_list)) {
+  data <- data_list[[loc]]
+  
+  for (i in 1:nrow(combinations)) {
+    stat_val <- combinations$stat[i]
+    freq_val <- combinations$data_freq[i]
+    
+    subset_data <- data %>%
+      filter(stat == stat_val, data_freq == freq_val)
+    
+    for (resp in response_vars) {
+      p <- ggplot(subset_data, aes(x = .data[[resp]], fill = treatment)) +
+        geom_histogram(bins = 30, alpha = 0.7, position = "identity") +
+        labs(
+          title = paste(loc, "|", resp, "|", stat_val, "|", freq_val),
+          x = resp,
+          y = "Count"
+        ) +
+        theme_minimal()
+      
+      print(p)
+    }
+  }
+}# I'm noting effects in: wat: vwc, t avg daily, vwc, t max daily, vwc min daily, vwc avg, max hourly, vwc min hourly*.  similar differences in mdv, but smaller
+
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r boxplots}
+
+for (loc in names(data_list)) {
+  data <- data_list[[loc]]
+  
+  # Ensure depth is a factor with the desired order
+  data <- data %>%
+    mutate(depth = factor(depth, levels = c("5cm", "20cm")))
+  
+  for (i in 1:nrow(combinations)) {
+    stat_val <- combinations$stat[i]
+    freq_val <- combinations$data_freq[i]
+    
+    subset_data <- data %>%
+      filter(stat == stat_val, data_freq == freq_val)
+    
+    for (resp in response_vars) {
+      p <- ggplot(subset_data, aes(x = treatment, y = .data[[resp]], fill = depth)) +
+        geom_boxplot(outlier.colour = "black", outlier.shape = 16, outlier.size = 2) +
+        labs(
+          title = paste(loc, "|", resp, "|", stat_val, "|", freq_val),
+          x = "Treatment",
+          y = resp
+        ) +
+        theme_minimal()
+      
+      print(p)
+    }
+  }
+}
+
+
+
+```
+```{r relationships over time}
+
+for (loc in names(data_list)) {
+  data <- data_list[[loc]]
+  
+  # Ensure depth is a factor with the desired order
+  data <- data %>%
+    mutate(depth = factor(depth, levels = c("5cm", "20cm")))
+  
+  for (i in 1:nrow(combinations)) {
+    stat_val <- combinations$stat[i]
+    freq_val <- combinations$data_freq[i]
+    
+    subset_data <- data %>%
+      filter(stat == stat_val, data_freq == freq_val)
+    
+    for (resp in response_vars) {
+      p <- ggplot(subset_data, aes(x = timestamp, y = .data[[resp]], color = treatment, linetype = depth)) +
+        geom_line() +
+        labs(
+          title = paste(loc, "|", resp, "|", stat_val, "|", freq_val),
+          x = "Date",
+          y = resp
+        ) +
+        theme_minimal()
+      
+      print(p)
+    }
+  }
+}
+
+```
+
