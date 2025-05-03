@@ -372,6 +372,68 @@ for (loc in names(data_list)) {
     }
   }
 }
+#same plot, but with smoothing function to create trendline to reduce noise
+for (loc in names(data_list)) {
+  data <- data_list[[loc]] %>%
+    mutate(depth = factor(depth, levels = c("5cm", "20cm")))
+  
+  for (i in 1:nrow(combinations)) {
+    stat_val <- combinations$stat[i]
+    freq_val <- combinations$data_freq[i]
+    
+    subset_data <- data %>%
+      filter(stat == stat_val, data_freq == freq_val)
+    
+    for (resp in response_vars) {
+      p <- ggplot(subset_data, aes(x = timestamp, y = .data[[resp]], color = treatment, linetype = depth)) +
+        geom_smooth(span = 0.3, se = FALSE) +  # Smoothing line only
+        labs(
+          title = paste(loc, "| Smoothed", resp, "|", stat_val, "|", freq_val),
+          x = "Date",
+          y = resp
+        ) +
+        theme_minimal()
+      
+      print(p)
+    }
+  }
+}
+
+#same plots but using rolling average to smooth short-term fluctuations
+library(zoo)  # For rollmean()
+
+for (loc in names(data_list)) {
+  data <- data_list[[loc]] %>%
+    mutate(depth = factor(depth, levels = c("5cm", "20cm")))
+  
+  for (i in 1:nrow(combinations)) {
+    stat_val <- combinations$stat[i]
+    freq_val <- combinations$data_freq[i]
+    
+    subset_data <- data %>%
+      filter(stat == stat_val, data_freq == freq_val) %>%
+      arrange(timestamp) %>%  # Ensure chronological order
+      group_by(treatment, depth) %>%  # Compute rolling avg within groups
+      mutate(
+        rolling_var = zoo::rollmean(.data[[resp]], k = 7, fill = NA, align = "right")
+      ) %>%
+      ungroup()
+    
+    for (resp in response_vars) {
+      p <- ggplot(subset_data, aes(x = timestamp, y = rolling_var, color = treatment, linetype = depth)) +
+        geom_line() +
+        labs(
+          title = paste(loc, "| 7-period Rolling Avg of", resp, "|", stat_val, "|", freq_val),
+          x = "Date",
+          y = paste("Rolling Avg of", resp)
+        ) +
+        theme_minimal()
+      
+      print(p)
+    }
+  }
+}
+
 
 ```
 
