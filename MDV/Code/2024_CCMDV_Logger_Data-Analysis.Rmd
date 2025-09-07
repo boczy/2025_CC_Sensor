@@ -1,0 +1,37 @@
+---
+title: "2024_CCMDV_Logger_Data-Analysis"
+output: html_document
+---
+
+#1 Setup
+```{r Load Libraries}
+library(tidyverse)
+```
+
+
+```{r Load Data}
+raw_data <- read_csv("../Data/mdv_sensor_data_2024.csv")
+
+
+```
+# Analysis
+```{r Exploratory data analysis}
+summary(raw_data)
+glimpse(raw_data)
+
+# Investigating unusual observations in data 
+vwc0 <- filter(raw_data, `vwc_(m^3/m^3)` <= 0.0000)
+ec0 <- filter(raw_data, `ec_(ds/m)` < 0)
+# Removing observations where `vwc_(m^3/m^3)` <= 0.0000 or `ec_(ds/m)` < 0
+clean_data <- raw_data %>%
+  filter(!(`vwc_(m^3/m^3)` <= 0 | `ec_(ds/m)` < 0))
+
+summary(clean_data)
+
+```
+
+```{r  Anova}
+
+
+```
+

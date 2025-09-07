@@ -5,17 +5,36 @@ date: "2025-04-18"
 output: html_document
 ---
 
-```{r setup, include=FALSE}
+## Experimental Goals
+
+This study examines how cover crop planting and termination timing affect soil moisture and temperature in cotton fields in Georgia. Results may guide growers on whether to adopt cover crops, and particularly whether to adopt the "Planting Green" practice of planting cotton into living cereal rye terminated just after planting, rather than 14 days before. Planting Green may enhance soil water retention, improve planting conditions, and suppress weeds, but its effects in Georgia remain untested.
+
+## Experimental Design
+
+The experiment leveraged four existing complete randomized block trials: two in Midville, Ga (sandy soil) and two in Watkinsville, Ga (clay soil); each location had one trial planted to cereal rye late in October 2023, and one planted to cereal rye in late November 2023. Each trial included three treatments with four replications:
+
+1.   No cover (nc) – no rye planted.
+
+2.   Plant brown (pb) – rye terminated 14 days before cotton planting.
+
+3.   Plant green (pg) – rye terminated 1–3 days after cotton planting.
+
+Due to funding limits, sensors were installed in one replication per trial. In each treatment, two sensors (5 cm and 20 cm depths) measured six variables every minute: volumetric water content (vwc), electrical conductivity (ec), temperature (t), signal attenuation (p), propagation time (pa), and volumetric reflectivity (vr). The latter three variables were used to calculate vwc and ec. Daily and hourly min, max, and average values were recorded.
+
+This analysis focuses on vwc and soil temperature, examining patterns across cover crop treatments, planting/termination timings, soil types, and depths. It is important to note that that there is not enough replication in these data to find group means significant, therefore this analysis will only investigate potential patterns for further study.
+
+\
+
+```{r setup, include=TRUE, warning=FALSE, message=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
-library(ggplot2)
 library(rlang)  # for .data pronoun
 ```
 
 ## Load Data
 
-```{r}
-# List Raw Data files in the working directory (raw files from data-loggers are in .dat format).  Create a list of all files, then 2 seperate lists for files from Watkinsville vs Midville.
+```{r list, echo=TRUE, warning=FALSE, message=FALSE}
+# List Raw Data files in the working directory (raw files from data-loggers are in .dat format).  Create a list of all files, then 2 seperate lists for files from Watkinsville vs Midville experiments.
 
 file_paths <- list.files(
   path = "Data/",
@@ -25,7 +44,7 @@ file_paths <- list.files(
 mdv_files <- file_paths[grepl("Midville", file_paths, ignore.case = TRUE)]
 wat_files <- file_paths[grepl("Watkinsville", file_paths, ignore.case = TRUE)]
 
-#Create data-frames, 1 for Midville, 1 for Watkinsville.  Add filename as a column, for extracting metdata later.  Skip first row of observations; standard for data files from our Campbell Scientific loggers 
+#Create data-frames, 1 for Midville, 1 for Watkinsville.  Add filename as a column, for extracting metadata later.  Skip first row of observations; standard for data files from our Campbell Scientific loggers 
 
 mdv_df <- map_dfr(mdv_files, function(file) {
   df <- read_csv(file, skip = 1)  # Read file, skipping the first row
@@ -39,10 +58,10 @@ wat_df <- map_dfr(wat_files, function(file) {
 
 ```
 
+## Data Cleaning
 
-## Clean Data
-```{r Clean mdv data}
-
+```{r Midville, echo=TRUE, warning=FALSE}
+#Cleaning Data from the Data-Loggers from Midville experiments
 # Extract the units row
 mdv_units_row <- mdv_df[1, ]
 
@@ -149,9 +168,8 @@ mdv_hourly_max <- mdv_cleaned_data10 %>%
 
 ```
 
-
-```{r Clean wat data}
-
+```{r Watkinsville, echo=TRUE, warning=FALSE}
+#Cleaning Data from the Data-Loggers from Watkinsville experiments
 # Extract the units row
 wat_units_row <- wat_df[1, ]
 
@@ -260,9 +278,11 @@ wat_hourly_max <- wat_cleaned_data10 %>%
 ```
 
 ## Exploratory Data Analysis
-We will use vwc_(m^3/m^3) as response variable.  We will investigate if treatment or cc_plant_time had an effect, or if there was an interaction with: treatment and depth, treatment and cc_plant_time, cc_plant_time and depth.  We will investigate the above for all 6 permutations of 'stat' * 'data_freq'.  That would resut in 90 boxplots per location, that seems like too many
-```{r create objects required for looping functions}
-# List your data frames and give them friendly names for plotting
+
+This will be the only data analysis phase, because there are not enough replications to give the degrees of freedom necessary to determine significant trends or differences in group means. This analysis will explore the effects of cover crop planting time, sensor depth, and cover crop treatment on response variables: soil volumetric water content (vwc\_(m^3/m^3)), electrical conductivity (ec\_(ds/m)), and temperature (t\_(deg_c)). However users can pick response variables to investigate by redefining "response_vars" in the "objects" chunk.
+
+```{r objects required for looping functions, echo=TRUE, warning=FALSE}
+# List your cleaned data frames and give them friendly names for plotting
 data_list <- list(
   wat = wat_cleaned_data10,
   mdv = mdv_cleaned_data10
@@ -270,14 +290,15 @@ data_list <- list(
 
 # List combinations of 'stat' * 'data_freq'
 combinations <- wat_cleaned_data10 %>%
-  distinct(stat, data_freq)
+  distinct(stat, data_freq) %>% 
+  filter(data_freq == "hourly")
 
 # Define response variables in a coding-friendly way, this makes it easier to change variables if needed
-response_vars <- "vwc_(m^3/m^3)"
+response_vars <- c("vwc_(m^3/m^3)", "ec_(ds/m)", "t_(deg_c)")
 
 ```
 
-```{r histogram, echo=FALSE}
+```{r histogram, eval=FALSE, include=FALSE}
 ##Using `vwc_(m^3/m^3)' as response variable, create histograms for all permutations of 'stat' * 'data_freq' at both locations
 
 # Create plots, looping through all possible combinations of 'stat'*'data_freq'
@@ -305,13 +326,12 @@ for (loc in names(data_list)) {
       print(p)
     }
   }
-}# I'm noting effects in: wat: vwc, t avg daily, vwc, t max daily, vwc min daily, vwc avg, max hourly, vwc min hourly*.  similar differences in mdv, but smaller
+}
 
 
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
-```{r boxplots}
+```{r boxplots, eval=FALSE, include=FALSE}
 
 for (loc in names(data_list)) {
   data <- data_list[[loc]]
@@ -372,7 +392,8 @@ for (loc in names(data_list)) {
 
 
 ```
-```{r relationships over time}
+
+```{r relationships over time, eval=FALSE, include=FALSE}
 #create plots which show response vars overtime for all combinations
 #for (loc in names(data_list)) {
   #data <- data_list[[loc]]
@@ -432,7 +453,8 @@ for (loc in names(data_list)) {
 
 
 ```
-```{r Treatment * Planting time}
+
+```{r Plots, echo=TRUE, warning=FALSE}
 #boxplots
 
 for (loc in names(data_list)) {
@@ -464,67 +486,6 @@ for (loc in names(data_list)) {
   }
 }
 
-#lineplots
-for (loc in names(data_list)) {
-  data <- data_list[[loc]] %>%
-    mutate(depth = factor(depth, levels = c("5cm", "20cm")))
-  
-  for (i in 1:nrow(combinations)) {
-    stat_val <- combinations$stat[i]
-    freq_val <- combinations$data_freq[i]
-    
-    subset_data <- data %>%
-      filter(stat == stat_val, data_freq == freq_val)
-    
-    for (resp in response_vars) {
-      p <- ggplot(subset_data, aes(x = timestamp, y = .data[[resp]], color = treatment, linetype = cc_plant_time)) +
-        geom_smooth(span = 0.3, se = FALSE) +  # Smoothing line only
-        labs(
-          title = paste(loc, "| Smoothed", resp, "|", stat_val, "|", freq_val),
-          x = "Date",
-          y = resp
-        ) +
-        facet_wrap(~depth)+
-        theme_minimal()
-      
-      print(p)
-    }
-  }
-}
-```
-
-```{r}
-{r Treatment * Depth}
-#boxplots
-
-for (loc in names(data_list)) {
-  data <- data_list[[loc]]
-  
-  data <- data %>%
-    mutate(depth = factor(depth, levels = c("5cm", "20cm")))
-  
-  for (i in 1:nrow(combinations)) {
-    stat_val <- combinations$stat[i]
-    freq_val <- combinations$data_freq[i]
-    
-    subset_data <- data %>%
-      filter(stat == stat_val, data_freq == freq_val)
-    
-    for (resp in response_vars) {
-      p <- ggplot(subset_data, aes(x = treatment, y = .data[[resp]], fill = cc_plant_time)) +
-        geom_boxplot(outlier.colour = "black", outlier.shape = 16, outlier.size = 2) +
-        facet_wrap(~depth)+
-        labs(
-          title = paste(loc, "|", resp, "|", stat_val, "|", freq_val),
-          x = "Treatment",
-          y = resp
-        ) +
-        theme_minimal()
-      
-      print(p)
-    }
-  }
-}
 
 #lineplots
 for (loc in names(data_list)) {
@@ -553,5 +514,19 @@ for (loc in names(data_list)) {
     }
   }
 }
+
+
 ```
 
+```{}
+```
+
+Preliminary Conclusions, and Further Work
+
+This analysis suggests that early planting of the cover crop (cc_plant_time early) increased volumetric water content and electrical conductivity throughout the season. This supports the hypothesis that the increased soil organic matter from an early-planted cover-crop will increase soil water infiltration and retention.
+
+There was some evidence for higher soil temperatures early in the season in treatments with no cover-crop. This temperature difference disappeared near the beginning of August. This pattern is likely due to the lack of cover crop residue shading the soil early in the season, leading to higher soil temperatures which then cooled as the cotton crop formed a canopy, effectively shading the soil as in the other treatments. \
+\
+Further analysis of these data could further investigate the soil temperature difference specifically before August.\
+\
+Further experiments in this area should focus on creating enough replication to determine significant differences in group means, and significant trends.
