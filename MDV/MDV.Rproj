@@ -1,0 +1,16 @@
+Version: 1.0
+ProjectId: a852a25c-a3b9-4328-9e43-40accf0433cb
+
+RestoreWorkspace: Default
+SaveWorkspace: Default
+AlwaysSaveHistory: Default
+
+EnableCodeIndexing: Yes
+UseSpacesForTab: Yes
+NumSpacesForTab: 2
+Encoding: UTF-8
+
+RnwWeave: Sweave
+LaTeX: pdfLaTeX
+
+ProjectName: 2024_CCMDV_Logger_Data-analysis
